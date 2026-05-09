@@ -130,14 +130,53 @@ export const fetchMatches = async (): Promise<Match[]> => {
     });
     
     await Promise.all(teamLogoPromises);
+
+    const getVenueName = async (event: any): Promise<string> => {
+      const directVenue = event.venue?.stadium?.name || event.venue?.name;
+      if (directVenue) {
+        return directVenue;
+      }
+
+      try {
+        const response = await fetch(`https://api.sofascore.com/api/v1/event/${event.id}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch event detail: ${response.status}`);
+        }
+
+        const detailData = await response.json();
+        const detailEvent = detailData.event || detailData;
+
+        const detailVenue =
+          detailEvent?.venue?.stadium?.name ||
+          detailEvent?.venue?.name ||
+          detailEvent?.homeTeam?.venue?.stadium?.name ||
+          detailEvent?.homeTeam?.venue?.name ||
+          detailEvent?.awayTeam?.venue?.stadium?.name ||
+          detailEvent?.awayTeam?.venue?.name;
+
+        if (detailVenue) {
+          return detailVenue;
+        }
+      } catch (error) {
+        console.error(`Error fetching venue for event ${event.id}:`, error);
+      }
+
+      return event.homeTeam?.venue?.stadium?.name ||
+        event.homeTeam?.venue?.name ||
+        event.awayTeam?.venue?.stadium?.name ||
+        event.awayTeam?.venue?.name ||
+        'Estadio no informado';
+    };
     
-    const matches = filteredEvents
-        .map((event: any): Match => {
+    const matches = await Promise.all(
+      filteredEvents
+        .map(async (event: any): Promise<Match> => {
           const isBocaHome = event.homeTeam?.id === BOCA_TEAM_ID;
           const eventDate = new Date(event.startTimestamp * 1000);
           const dateStr = eventDate.toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
           const timeStr = eventDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
           const isFinished = event.status === 'finished' || event.status?.type === 'finished';
+          const venueName = isBocaHome ? 'La Bombonera' : await getVenueName(event);
           
           return {
             id: event.id?.toString() || Math.random().toString(),
@@ -146,7 +185,7 @@ export const fetchMatches = async (): Promise<Match[]> => {
             time: timeStr,
             opponent: isBocaHome ? event.awayTeam?.name : event.homeTeam?.name,
             competition: event.tournament?.name || event.league?.name || 'Competencia',
-            venue: event.venue?.name || 'Estadio',
+            venue: venueName,
             homeAway: isBocaHome ? 'home' : 'away',
             status: isFinished ? 'finished' : 'upcoming',
             result: isFinished && event.homeScore ? {
@@ -154,7 +193,8 @@ export const fetchMatches = async (): Promise<Match[]> => {
               opponentScore: isBocaHome ? event.awayScore.current : event.homeScore.current,
             } : undefined,
           };
-        });
+        })
+    );
       
       if (matches.length > 0) {
         return matches;
